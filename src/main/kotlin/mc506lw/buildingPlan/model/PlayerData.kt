@@ -12,5 +12,6 @@ data class PlayerData(
     var last5hRefresh: Long = 0,
     var lastDailyReset: String = "",
     var lastWeeklyReset: String = "",
-    var bonusPoints: Int = 0
+    var bonusPoints: Int = 0,
+    var originalPrice: String = ""
 )

@@ -9,7 +9,7 @@ class ConfigManager(private val plugin: BuildingPlan) {
 
     var debug: Boolean = false
         private set
-    var subscriptionDays: Int = 30
+    var subscriptionDays: Int = 28
         private set
     val plans = mutableMapOf<String, PlanTier>()
     val materialGroups = mutableListOf<MaterialGroup>()
@@ -20,7 +20,7 @@ class ConfigManager(private val plugin: BuildingPlan) {
         val config = plugin.config
 
         debug = config.getBoolean("debug", false)
-        subscriptionDays = config.getInt("subscription-days", 30)
+        subscriptionDays = config.getInt("subscription-days", 28)
 
         plans.clear()
         val plansSection = config.getConfigurationSection("plans")

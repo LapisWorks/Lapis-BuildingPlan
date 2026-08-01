@@ -46,6 +46,7 @@ AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Build
 ### 3. 本地优先，零依赖
 
 - 内置 H2 数据库，无需 MySQL/Redis
+- GUI 使用原生 Bukkit Inventory API 实现，无第三方 GUI 库（不影响其他插件 GUI）
 - 单文件部署，即装即用
 - Folia 兼容，支持现代 Minecraft 服务端架构
 - PlaceholderAPI 变量支持（可选）
@@ -72,7 +73,7 @@ AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Build
 - **语言**：Kotlin 2.4 (JVM 25)
 - **平台**：Paper 1.21.4 (Folia 兼容)
 - **数据库**：H2 (嵌入式，MySQL 兼容模式)
-- **GUI**：InvUI 2.1
+- **GUI**：原生 Bukkit Inventory API（`InventoryHolder` 严格作用域，不干扰其他插件）
 - **构建**：Gradle + ShadowJar
 - **可选依赖**：PlaceholderAPI
 

@@ -59,6 +59,7 @@ class BuildingPlan : JavaPlugin(), Listener {
         guiManager = GuiManager(this)
 
         server.pluginManager.registerEvents(this, this)
+        server.pluginManager.registerEvents(guiManager, this)
 
         getCommand("bp")?.setExecutor(BpCommand(this))
         getCommand("bp")?.tabCompleter = BpCommand(this)
@@ -74,15 +75,16 @@ class BuildingPlan : JavaPlugin(), Listener {
 
         planManager.startSettlementTask()
 
-        logger.info("${description.name} v${description.version} enabled [Folia=$isFolia]")
+        logger.info("${pluginMeta.name} v${pluginMeta.version} enabled [Folia=$isFolia]")
     }
 
     override fun onDisable() {
+        planManager.stopSettlementTask()
         for (player in server.onlinePlayers) {
             planManager.onPlayerQuit(player.uniqueId)
         }
         databaseManager.close()
-        logger.info("${description.name} disabled")
+        logger.info("${pluginMeta.name} disabled")
     }
 
     @EventHandler
@@ -111,8 +113,8 @@ class BuildingPlan : JavaPlugin(), Listener {
         }
     }
 
-    fun runTaskTimer(runnable: Runnable, delayTicks: Long, periodTicks: Long) {
-        if (isFolia) {
+    fun runTaskTimer(runnable: Runnable, delayTicks: Long, periodTicks: Long): Any {
+        return if (isFolia) {
             server.globalRegionScheduler.runAtFixedRate(
                 this,
                 Consumer<ScheduledTask> { runnable.run() },

@@ -33,8 +33,8 @@ class DatabaseManager(private val dataFolder: File) {
                 CREATE TABLE IF NOT EXISTS player_data (
                     uuid             TEXT PRIMARY KEY,
                     tier             TEXT NOT NULL DEFAULT 'NONE',
-                    subscribe_time   INTEGER NOT NULL DEFAULT 0,
-                    expire_time      INTEGER NOT NULL DEFAULT 0,
+                    subscribe_time   BIGINT NOT NULL DEFAULT 0,
+                    expire_time      BIGINT NOT NULL DEFAULT 0,
                     balance_5h       INTEGER NOT NULL DEFAULT 0,
                     balance_daily    INTEGER NOT NULL DEFAULT 0,
                     balance_weekly   INTEGER NOT NULL DEFAULT 0,
@@ -42,14 +42,33 @@ class DatabaseManager(private val dataFolder: File) {
                     last_5h_refresh  INTEGER NOT NULL DEFAULT 0,
                     last_daily_reset TEXT NOT NULL DEFAULT '',
                     last_weekly_reset TEXT NOT NULL DEFAULT '',
-                    bonus_points     INTEGER NOT NULL DEFAULT 0
+                    bonus_points     INTEGER NOT NULL DEFAULT 0,
+                    original_price  TEXT NOT NULL DEFAULT ''
                 )
             """.trimIndent())
+            // 兼容已有数据库：将 subscribe_time、expire_time 从 INTEGER 迁移到 BIGINT
+            try {
+                stmt.execute("ALTER TABLE player_data ALTER COLUMN subscribe_time BIGINT")
+                stmt.execute("ALTER TABLE player_data ALTER COLUMN expire_time BIGINT")
+            } catch (_: Exception) {
+                // 列已是 BIGINT 时 H2 可能抛出异常，忽略
+            }
+            // 兼容已有数据库：新增列（老数据库没有这些列）
+            try {
+                stmt.execute("ALTER TABLE player_data ADD COLUMN IF NOT EXISTS bonus_points INTEGER NOT NULL DEFAULT 0")
+            } catch (_: Exception) {}
+            try {
+                stmt.execute("ALTER TABLE player_data ADD COLUMN IF NOT EXISTS original_price TEXT NOT NULL DEFAULT ''")
+            } catch (_: Exception) {}
         }
     }
 
     fun getLock(uuid: String): ReentrantLock {
         return playerLocks.computeIfAbsent(uuid) { ReentrantLock() }
+    }
+
+    fun removeLock(uuid: String) {
+        playerLocks.remove(uuid)
     }
 
     fun loadPlayerData(uuid: String): CompletableFuture<PlayerData> {
@@ -71,7 +90,8 @@ class DatabaseManager(private val dataFolder: File) {
                             last5hRefresh = rs.getLong("last_5h_refresh"),
                             lastDailyReset = rs.getString("last_daily_reset"),
                             lastWeeklyReset = rs.getString("last_weekly_reset"),
-                            bonusPoints = rs.getInt("bonus_points")
+                            bonusPoints = rs.getInt("bonus_points"),
+                            originalPrice = rs.getString("original_price")
                         )
                     } else {
                         val data = PlayerData(uuid = uuid)
@@ -86,8 +106,8 @@ class DatabaseManager(private val dataFolder: File) {
     private fun insertPlayerData(data: PlayerData) {
         val conn = connection ?: throw IllegalStateException("Database not initialized")
         conn.prepareStatement("""
-            INSERT INTO player_data (uuid, tier, subscribe_time, expire_time, balance_5h, balance_daily, balance_weekly, pool, last_5h_refresh, last_daily_reset, last_weekly_reset, bonus_points)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO player_data (uuid, tier, subscribe_time, expire_time, balance_5h, balance_daily, balance_weekly, pool, last_5h_refresh, last_daily_reset, last_weekly_reset, bonus_points, original_price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """.trimIndent()).use { ps ->
             ps.setString(1, data.uuid)
             ps.setString(2, data.tier)
@@ -101,6 +121,7 @@ class DatabaseManager(private val dataFolder: File) {
             ps.setString(10, data.lastDailyReset)
             ps.setString(11, data.lastWeeklyReset)
             ps.setInt(12, data.bonusPoints)
+            ps.setString(13, data.originalPrice)
             ps.executeUpdate()
         }
     }
@@ -117,7 +138,37 @@ class DatabaseManager(private val dataFolder: File) {
         ps.setString(9, data.lastDailyReset)
         ps.setString(10, data.lastWeeklyReset)
         ps.setInt(11, data.bonusPoints)
-        ps.setString(12, data.uuid)
+        ps.setString(12, data.originalPrice)
+        ps.setString(13, data.uuid)
+    }
+
+    fun loadAllPlayerData(): CompletableFuture<List<PlayerData>> {
+        return CompletableFuture.supplyAsync({
+            val conn = connection ?: throw IllegalStateException("Database not initialized")
+            conn.prepareStatement("SELECT * FROM player_data WHERE tier != 'NONE'").use { ps ->
+                ps.executeQuery().use { rs ->
+                    val results = mutableListOf<PlayerData>()
+                    while (rs.next()) {
+                        results.add(PlayerData(
+                            uuid = rs.getString("uuid"),
+                            tier = rs.getString("tier"),
+                            subscribeTime = rs.getLong("subscribe_time"),
+                            expireTime = rs.getLong("expire_time"),
+                            balance5h = rs.getInt("balance_5h"),
+                            balanceDaily = rs.getInt("balance_daily"),
+                            balanceWeekly = rs.getInt("balance_weekly"),
+                            pool = rs.getInt("pool"),
+                            last5hRefresh = rs.getLong("last_5h_refresh"),
+                            lastDailyReset = rs.getString("last_daily_reset"),
+                            lastWeeklyReset = rs.getString("last_weekly_reset"),
+                            bonusPoints = rs.getInt("bonus_points"),
+                            originalPrice = rs.getString("original_price")
+                        ))
+                    }
+                    results
+                }
+            }
+        }, writeExecutor)
     }
 
     fun savePlayerData(data: PlayerData): CompletableFuture<Void> {
@@ -128,7 +179,7 @@ class DatabaseManager(private val dataFolder: File) {
                     tier = ?, subscribe_time = ?, expire_time = ?,
                     balance_5h = ?, balance_daily = ?, balance_weekly = ?,
                     pool = ?, last_5h_refresh = ?, last_daily_reset = ?,
-                    last_weekly_reset = ?, bonus_points = ?
+                    last_weekly_reset = ?, bonus_points = ?, original_price = ?
                 WHERE uuid = ?
             """.trimIndent()).use { ps ->
                 fillSaveStatement(ps, data)
@@ -138,18 +189,20 @@ class DatabaseManager(private val dataFolder: File) {
     }
 
     fun savePlayerDataSync(data: PlayerData) {
-        val conn = connection ?: throw IllegalStateException("Database not initialized")
-        conn.prepareStatement("""
-            UPDATE player_data SET
-                tier = ?, subscribe_time = ?, expire_time = ?,
-                balance_5h = ?, balance_daily = ?, balance_weekly = ?,
-                pool = ?, last_5h_refresh = ?, last_daily_reset = ?,
-                last_weekly_reset = ?, bonus_points = ?
-            WHERE uuid = ?
-        """.trimIndent()).use { ps ->
-            fillSaveStatement(ps, data)
-            ps.executeUpdate()
-        }
+        CompletableFuture.runAsync({
+            val conn = connection ?: throw IllegalStateException("Database not initialized")
+            conn.prepareStatement("""
+                UPDATE player_data SET
+                    tier = ?, subscribe_time = ?, expire_time = ?,
+                    balance_5h = ?, balance_daily = ?, balance_weekly = ?,
+                    pool = ?, last_5h_refresh = ?, last_daily_reset = ?,
+                    last_weekly_reset = ?, bonus_points = ?, original_price = ?
+                WHERE uuid = ?
+            """.trimIndent()).use { ps ->
+                fillSaveStatement(ps, data)
+                ps.executeUpdate()
+            }
+        }, writeExecutor).join()
     }
 
     fun close() {

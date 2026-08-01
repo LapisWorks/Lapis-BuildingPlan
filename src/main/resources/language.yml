@@ -1,5 +1,5 @@
 # 当 language.yml 的结构有变更时，bump 此版本号；插件启动会检测磁盘版本低于此值时强制覆盖。
-lang-version: 2
+lang-version: 5
 
 zh_cn:
   prefix: "<#00B4D8>[BuildingPlan] "
@@ -12,6 +12,7 @@ zh_cn:
   subscribe-success: "<#06D6A0>成功订阅 <#48CAE4>{tier}<#06D6A0> 套餐！有效期30天。"
   already-subscribed: "<#FFD93D>你已订阅 <#48CAE4>{tier}<#FFD93D> 套餐，到期时间：<#FFD166>{expire}<#FFD93D>。套餐有效期内无法续订。"
   subscribe-upgraded: "<#06D6A0>续费成功！所有额度已重置。"
+  subscribe-failed: "<#EF476F>订阅失败，请稍后重试。"
   balance-info: "<#48CAE4>5h额度：<#FFD166>{balance_5h}/{quota_5h} <#48CAE4>日额度：<#FFD166>{balance_daily}/{quota_daily}"
   balance-info-2: "<#48CAE4>周额度：<#FFD166>{balance_weekly}/{quota_weekly} <#48CAE4>积攒池：<#FFD166>{pool}/{pool_cap}"
   expire-info: "<#48CAE4>到期时间：<#FFD166>{expire}"
@@ -30,9 +31,26 @@ zh_cn:
   help-subscribe: "<#48CAE4>/bp subscribe <#8D99AE>- 订阅套餐"
   help-admin-give: "<#48CAE4>/bp admin give <player> <points> <#8D99AE>- 给予补偿额度"
   help-admin-reload: "<#48CAE4>/bp admin reload <#8D99AE>- 重载配置"
+  plan-info-tier: "<#48CAE4>当前套餐：<#FFD166>{tier}"
+  plan-info-expire: "<#48CAE4>到期时间：<#FFD166>{expire} <#8D99AE>（剩余 {days} 天）"
+  admin-extend-success: "<#06D6A0>已将 <#48CAE4>{player}<#06D6A0> 的套餐延长 <#FFD166>{days}<#06D6A0> 天，新到期时间：<#FFD166>{expire}"
+  admin-reset-success: "<#06D6A0>已重置 <#48CAE4>{player}<#06D6A0> 的所有额度！"
+  admin-resetall-success: "<#06D6A0>已重置所有玩家的额度！共 <#FFD166>{count}<#06D6A0> 名玩家。"
+  help-plan: "<#48CAE4>/bp plan <#8D99AE>- 查看套餐信息"
+  help-upgrade: "<#48CAE4>/bp upgrade <#8D99AE>- 升级套餐"
+  upgrade-no-active: "<#EF476F>升级失败：当前套餐已过期，请重新订阅。"
+  upgrade-max-tier: "<#EF476F>你已拥有最高级套餐，无法继续升级。"
+  upgrade-downgrade: "<#EF476F>无法降级套餐！"
+  upgrade-cost-info: "<#48CAE4>升级费用：<#8D99AE>新套餐 <#FFD166>{new_tier} <#8D99AE>全价 <#FFD166>{new_price}<#8D99AE>，已用价值 <#FFD166>{used_value}<#8D99AE>，需补差价 <#FFD166>{diff}"
+  upgrade-success: "<#06D6A0>成功升级至 <#48CAE4>{tier}<#06D6A0> 套餐！有效期30天。"
+  upgrade-refund: "<#8D99AE>返还：{items}"
+  help-admin-extend: "<#48CAE4>/bp admin extend <player> <days> <#8D99AE>- 延长套餐天数"
+  help-admin-reset: "<#48CAE4>/bp admin reset <player> <#8D99AE>- 重置玩家额度"
+  help-admin-resetall: "<#48CAE4>/bp admin resetall <#8D99AE>- 重置所有在线玩家额度"
   gui:
     subscribe-title: "<#00B4D8>订阅套餐"
     shop-title: "<#00B4D8>建材商店"
+    upgrade-title: "<#00B4D8>升级套餐"
 
 en_us:
   prefix: "<#00B4D8>[BuildingPlan] "
@@ -45,6 +63,7 @@ en_us:
   subscribe-success: "<#06D6A0>Subscribed to <#48CAE4>{tier}<#06D6A0>! Valid for 30 days."
   already-subscribed: "<#FFD93D>Already subscribed to <#48CAE4>{tier}<#FFD93D>, expires <#FFD166>{expire}<#FFD93D>. Cannot renew while active."
   subscribe-upgraded: "<#06D6A0>Renewed! All balances reset."
+  subscribe-failed: "<#EF476F>Subscription failed, please try again later."
   balance-info: "<#48CAE4>5h: <#FFD166>{balance_5h}/{quota_5h} <#48CAE4>Daily: <#FFD166>{balance_daily}/{quota_daily}"
   balance-info-2: "<#48CAE4>Weekly: <#FFD166>{balance_weekly}/{quota_weekly} <#48CAE4>Pool: <#FFD166>{pool}/{pool_cap}"
   expire-info: "<#48CAE4>Expires: <#FFD166>{expire}"
@@ -63,6 +82,23 @@ en_us:
   help-subscribe: "<#48CAE4>/bp subscribe <#8D99AE>- Subscribe to a plan"
   help-admin-give: "<#48CAE4>/bp admin give <player> <points> <#8D99AE>- Give bonus points"
   help-admin-reload: "<#48CAE4>/bp admin reload <#8D99AE>- Reload config"
+  plan-info-tier: "<#48CAE4>Current Plan: <#FFD166>{tier}"
+  plan-info-expire: "<#48CAE4>Expires: <#FFD166>{expire} <#8D99AE>({days} days remaining)"
+  admin-extend-success: "<#06D6A0>Extended <#48CAE4>{player}'s<#06D6A0> plan by <#FFD166>{days}<#06D6A0> days. New expiry: <#FFD166>{expire}"
+  admin-reset-success: "<#06D6A0>Reset <#48CAE4>{player}'s<#06D6A0> quotas!"
+  admin-resetall-success: "<#06D6A0>Reset all players' quotas! <#FFD166>{count}<#06D6A0> players affected."
+  help-plan: "<#48CAE4>/bp plan <#8D99AE>- View plan info"
+  help-upgrade: "<#48CAE4>/bp upgrade <#8D99AE>- Upgrade plan"
+  upgrade-no-active: "<#EF476F>Upgrade failed: current plan expired, please subscribe anew."
+  upgrade-max-tier: "<#EF476F>You already have the highest tier plan!"
+  upgrade-downgrade: "<#EF476F>Cannot downgrade plan!"
+  upgrade-cost-info: "<#48CAE4>Upgrade cost: <#8D99AE>New <#FFD166>{new_tier} <#8D99AE>price <#FFD166>{new_price}<#8D99AE>, used <#FFD166>{used_value}<#8D99AE>, diff <#FFD166>{diff}"
+  upgrade-success: "<#06D6A0>Upgraded to <#48CAE4>{tier}<#06D6A0>! Valid for 30 days."
+  upgrade-refund: "<#8D99AE>Refund: {items}"
+  help-admin-extend: "<#48CAE4>/bp admin extend <player> <days> <#8D99AE>- Extend plan days"
+  help-admin-reset: "<#48CAE4>/bp admin reset <player> <#8D99AE>- Reset player quotas"
+  help-admin-resetall: "<#48CAE4>/bp admin resetall <#8D99AE>- Reset all online players' quotas"
   gui:
     subscribe-title: "<#00B4D8>Subscribe"
     shop-title: "<#00B4D8>Material Shop"
+    upgrade-title: "<#00B4D8>Upgrade Plan"

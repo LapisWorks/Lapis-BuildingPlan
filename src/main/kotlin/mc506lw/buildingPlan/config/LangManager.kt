@@ -17,11 +17,12 @@ class LangManager(private val plugin: BuildingPlan) {
      * 当 language.yml 的内容结构有变更（新增/修改 key）时，bump 此版本号，
      * LangManager 会检测磁盘文件的版本号不匹配时强制用 JAR 内的最新版本覆盖。
      */
-    private val currentLangVersion = 2
+    private val currentLangVersion = 5
 
     private val fallbacks = mapOf(
         "gui.shop-title" to "<#00B4D8>建材商店",
-        "gui.subscribe-title" to "<#00B4D8>订阅套餐"
+        "gui.subscribe-title" to "<#00B4D8>订阅套餐",
+        "gui.upgrade-title" to "<#00B4D8>升级套餐"
     )
 
     fun load() {

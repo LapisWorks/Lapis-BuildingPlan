@@ -10,9 +10,9 @@ class PAPIExpansion(private val plugin: BuildingPlan) : PlaceholderExpansion() {
 
     override fun getIdentifier(): String = "buildingplan"
 
-    override fun getAuthor(): String = plugin.description.authors.firstOrNull() ?: "mc506lw"
+    override fun getAuthor(): String = plugin.pluginMeta.authors.firstOrNull() ?: "mc506lw"
 
-    override fun getVersion(): String = plugin.description.version
+    override fun getVersion(): String = plugin.pluginMeta.version
 
     override fun persist(): Boolean = true
 
