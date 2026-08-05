@@ -1,1 +1,1 @@
-rootProject.name = "BuildingPlan"
+rootProject.name = "Lapis-BuildingPlan"

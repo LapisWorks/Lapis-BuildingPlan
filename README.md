@@ -1,8 +1,8 @@
-# BuildingPlan
+# Lapis-BuildingPlan
 
 一个 Minecraft 订阅制建材商店插件，采用类似 AI Token 的额度体系来管理玩家获取建材的权限和数量。
 
-## 为什么做 BuildingPlan？
+## 为什么做 Lapis-BuildingPlan？
 
 AI 领域有 Token Plan（如 Codex、Claude、Opencode GO ），**付费 → 获得额度 → 按量消耗**。但 Minecraft 建材商店一直停留在"直接花钱买"的模式：
 
@@ -10,11 +10,11 @@ AI 领域有 Token Plan（如 Codex、Claude、Opencode GO ），**付费 → �
 - 要么每颗方块定价，OP 天天调价格表
 - 要么按组定价，大玩家刷爆库存小玩家买不起
 
-BuildingPlan 把 Token Plan 的模式搬进 Minecraft：**订阅套餐 → 获得多维度额度 → 按组消耗**。
+Lapis-BuildingPlan 把 Token Plan 的模式搬进 Minecraft：**订阅套餐 → 获得多维度额度 → 按组消耗**。
 
 ## 与 AI Token Plan 的对比
 
-| 维度 | AI Token Plan（如 Opencode GO ） | BuildingPlan |
+| 维度 | AI Token Plan（如 Opencode GO ） | Lapis-BuildingPlan |
 |------|---------------------------|-------------|
 | **付费模式** | 月订阅固定费用 | 月订阅（一次性物品抵扣） |
 | **额度维度** | 三重额度：5h 爆发 + 日额度 + 周额度 | 三重额度：5h 爆发 + 日额度 + 周额度 |
@@ -25,7 +25,7 @@ BuildingPlan 把 Token Plan 的模式搬进 Minecraft：**订阅套餐 → 获�
 
 ### 1. 积攒池（Pool）— 告别"不用就亏"
 
-AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。BuildingPlan 的 Pool 机制让每日未用完的额度自动转入积攒池（有上限），玩家可以囤积额度应对大型建筑项目。
+AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Lapis-BuildingPlan 的 Pool 机制让每日未用完的额度自动转入积攒池（有上限），玩家可以囤积额度应对大型建筑项目。
 
 ```
 日额度 3000 → 用掉 2000 → 剩余 1000 → 自动转入积攒池（假设上限 3000）
@@ -81,7 +81,7 @@ AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Build
 
 1. 将构建好的 jar 放入 `plugins/` 目录
 2. 重启服务器
-3. 编辑 `plugins/BuildingPlan/config.yml` 自定义套餐和价格
+3. 编辑 `plugins/Lapis-BuildingPlan/config.yml` 自定义套餐和价格
 4. 玩家使用 `/bp subscribe` 打开订阅 GUI，`/bp shop` 打开建材商店
 
 ## 命令

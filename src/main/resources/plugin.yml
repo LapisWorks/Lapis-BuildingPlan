@@ -1,4 +1,4 @@
-name: BuildingPlan
+name: Lapis-BuildingPlan
 version: '${version}'
 
 main: mc506lw.buildingPlan.BuildingPlan
@@ -10,16 +10,16 @@ libraries:
 
 commands:
   bp:
-    description: BuildingPlan main command
+    description: Lapis-BuildingPlan main command
     usage: /bp [shop|subscribe|admin]
     permission: buildingplan.use
 
 permissions:
   buildingplan.use:
-    description: Use basic BuildingPlan commands
+    description: Use basic Lapis-BuildingPlan commands
     default: true
   buildingplan.shop:
-    description: Open BuildingPlan shop
+    description: Open Lapis-BuildingPlan shop
     default: true
   buildingplan.subscribe:
     description: Subscribe to a plan

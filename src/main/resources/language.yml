@@ -2,7 +2,7 @@
 lang-version: 5
 
 zh_cn:
-  prefix: "<#00B4D8>[BuildingPlan] "
+  prefix: "<#00B4D8>[Lapis-BuildingPlan] "
   no-permission: "<#EF476F>你没有权限执行此操作！"
   no-subscription: "<#EF476F>你尚未订阅任何套餐！"
   subscription-expired: "<#EF476F>你的订阅已过期！"
@@ -26,7 +26,7 @@ zh_cn:
   player-not-found: "<#EF476F>玩家不在线！"
   invalid-number: "<#EF476F>无效的数字！"
   player-only: "<#EF476F>只有玩家才能执行此命令！"
-  help-header: "<#00B4D8>=== BuildingPlan ==="
+  help-header: "<#00B4D8>=== Lapis-BuildingPlan ==="
   help-shop: "<#48CAE4>/bp shop <#8D99AE>- 打开建材商店"
   help-subscribe: "<#48CAE4>/bp subscribe <#8D99AE>- 订阅套餐"
   help-admin-give: "<#48CAE4>/bp admin give <player> <points> <#8D99AE>- 给予补偿额度"
@@ -53,7 +53,7 @@ zh_cn:
     upgrade-title: "<#00B4D8>升级套餐"
 
 en_us:
-  prefix: "<#00B4D8>[BuildingPlan] "
+  prefix: "<#00B4D8>[Lapis-BuildingPlan] "
   no-permission: "<#EF476F>You don't have permission!"
   no-subscription: "<#EF476F>You don't have an active subscription!"
   subscription-expired: "<#EF476F>Your subscription has expired!"
@@ -77,7 +77,7 @@ en_us:
   player-not-found: "<#EF476F>Player not online!"
   invalid-number: "<#EF476F>Invalid number!"
   player-only: "<#EF476F>Only players can use this command!"
-  help-header: "<#00B4D8>=== BuildingPlan ==="
+  help-header: "<#00B4D8>=== Lapis-BuildingPlan ==="
   help-shop: "<#48CAE4>/bp shop <#8D99AE>- Open material shop"
   help-subscribe: "<#48CAE4>/bp subscribe <#8D99AE>- Subscribe to a plan"
   help-admin-give: "<#48CAE4>/bp admin give <player> <points> <#8D99AE>- Give bonus points"
