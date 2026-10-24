@@ -9,6 +9,7 @@ data class PlayerData(
     var balanceDaily: Int = 0,
     var balanceWeekly: Int = 0,
     var pool: Int = 0,
+    var weeklyUsed: Int = 0,
     var last5hRefresh: Long = 0,
     var lastDailyReset: String = "",
     var lastWeeklyReset: String = "",

@@ -71,7 +71,7 @@ AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Lapis
 ## 技术栈
 
 - **语言**：Kotlin 2.4 (JVM 25)
-- **平台**：Paper 1.21.4 (Folia 兼容)
+- **平台**：Paper 26.2 (Folia 兼容)
 - **数据库**：H2 (嵌入式，MySQL 兼容模式)
 - **GUI**：原生 Bukkit Inventory API（`InventoryHolder` 严格作用域，不干扰其他插件）
 - **构建**：Gradle + ShadowJar
@@ -92,6 +92,87 @@ AI Token Plan 最大痛点之一：**5H/每日额度用不完就清零**。Lapis
 | `/bp subscribe` | 打开订阅 GUI | `buildingplan.subscribe` |
 | `/bp admin give <玩家> <点数>` | 给予补偿额度 | `buildingplan.admin` |
 | `/bp admin reload` | 重载配置 | `buildingplan.admin` |
+
+## 对外 API
+
+其他插件可以直接读写玩家的 BuildingPlan 额度，把"建材额度"当成服务器里的一种通用货币。
+
+### 接入方式
+
+```kotlin
+// 方式一：静态入口，插件未启用时返回 null
+val api = mc506lw.buildingPlan.BuildingPlan.getAPI() ?: return
+
+// 方式二：Bukkit 服务管理器
+val api = Bukkit.getServicesManager().load(BuildingPlanAPI::class.java) ?: return
+```
+
+编译期依赖（jar 未发布到远程仓库，用本地文件即可）：
+
+```kotlin
+dependencies {
+    compileOnly(files("libs/BuildingPlan-1.5.jar"))
+}
+```
+
+并在自己的 `plugin.yml` 里声明 `softdepend: [BuildingPlan]`，保证加载顺序。
+
+### 查询
+
+| 方法 | 说明 |
+|------|------|
+| `isLoaded(uuid)` | 额度数据是否已加载到内存 |
+| `getTier(uuid)` | 当前套餐名（如 `lite`），无有效订阅返回 null |
+| `hasActiveSubscription(uuid)` | 是否有未过期的订阅 |
+| `getQuota(uuid)` | 完整快照 `QuotaSnapshot`，无有效订阅返回 null |
+| `getAvailable(uuid)` | 当前可用点数 |
+| `canAfford(uuid, points)` | 是否买得起 |
+| `getRemainingDays(uuid)` / `getExpireTime(uuid)` | 剩余天数 / 到期时间 |
+| `getPointsPerStack(material)` | 该材料每整组价格，不在分组内返回 0 |
+| `getMaterialGroupName(material)` | 该材料所属分组名 |
+
+### 扣减与退回
+
+```kotlin
+val result = api.tryConsume(player.uniqueId, 50, "myplugin:teleport")
+if (!result.success) {
+    // result.failReason: NOT_LOADED / NO_SUBSCRIPTION / EXPIRED / INSUFFICIENT / LOCKED / INVALID_AMOUNT
+    player.sendMessage("额度不足，当前可用 ${result.availableBefore} 点")
+    return
+}
+if (!teleport(player)) {
+    // 业务失败记得退回，否则玩家白扣
+    api.refund(player.uniqueId, 50, "myplugin:teleport-refund")
+}
+```
+
+`tryConsume` 是原子的：要么全扣、要么一点不扣。`refund` 退回到"补偿额度"，不占用三档配额，所以不会因为退回而突破 5h/日/周上限。
+
+另外 `grantBonus(uuid, points)` 可以直接发放补偿额度，适合活动奖励。
+
+### 事件
+
+```kotlin
+@EventHandler
+fun onBalanceChange(event: BalanceChangeEvent) {
+    // event.delta 负数=扣减，正数=增加
+    // event.reason 是调用方传进来的原因
+    logger.info("${event.playerId} 额度变化 ${event.delta}，剩余 ${event.availableAfter}，原因 ${event.reason}")
+}
+
+@EventHandler
+fun onSubscriptionChange(event: SubscriptionChangeEvent) {
+    // event.reason: SUBSCRIBE / UPGRADE / EXPIRE / ADMIN_RESET / ADMIN_EXTEND
+}
+```
+
+事件只携带 UUID，需要实体时自行 `Bukkit.getPlayer(uuid)`。
+
+### 线程约定
+
+所有方法直接读写内存中的额度对象，**必须在玩家所属线程调用**（普通 Paper 服务端即主线程；Folia 下是该玩家所在 region 的线程）。从异步线程调用不会崩服，但可能读到扣减过程中的中间值。
+
+离线玩家的额度不会常驻内存，调用会得到 `ConsumeResult.FailReason.NOT_LOADED` 或 null，可先用 `isLoaded` 判断。
 
 ## 许可证
 

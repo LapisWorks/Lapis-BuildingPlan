@@ -1,11 +1,14 @@
 package mc506lw.buildingPlan
 
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask
+import mc506lw.buildingPlan.api.BuildingPlanAPI
+import mc506lw.buildingPlan.api.BuildingPlanApiImpl
 import mc506lw.buildingPlan.command.BpCommand
 import mc506lw.buildingPlan.config.ConfigManager
 import mc506lw.buildingPlan.config.LangManager
 import mc506lw.buildingPlan.database.DatabaseManager
 import mc506lw.buildingPlan.gui.GuiManager
+import mc506lw.buildingPlan.gui.ShopGui
 import mc506lw.buildingPlan.manager.PlanManager
 import mc506lw.buildingPlan.papi.PAPIExpansion
 import org.bukkit.entity.Player
@@ -13,6 +16,7 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
+import org.bukkit.plugin.ServicePriority
 import org.bukkit.plugin.java.JavaPlugin
 import java.util.function.Consumer
 
@@ -21,6 +25,18 @@ class BuildingPlan : JavaPlugin(), Listener {
     companion object {
         lateinit var instance: BuildingPlan
             private set
+
+        @Volatile
+        private var apiRef: BuildingPlanAPI? = null
+
+        /**
+         * 获取对外 API。插件尚未启用或已卸载时返回 null。
+         *
+         * 也可以走 Bukkit 服务通道：
+         * `Bukkit.getServicesManager().load(BuildingPlanAPI::class.java)`。
+         */
+        @JvmStatic
+        fun getAPI(): BuildingPlanAPI? = apiRef
     }
 
     val isFolia: Boolean by lazy {
@@ -58,6 +74,11 @@ class BuildingPlan : JavaPlugin(), Listener {
         planManager = PlanManager(this)
         guiManager = GuiManager(this)
 
+        // 对外 API：静态入口 + Bukkit 服务管理器双通道，方便其他插件按需取用
+        val apiImpl = BuildingPlanApiImpl(this)
+        apiRef = apiImpl
+        server.servicesManager.register(BuildingPlanAPI::class.java, apiImpl, this, ServicePriority.Normal)
+
         server.pluginManager.registerEvents(this, this)
         server.pluginManager.registerEvents(guiManager, this)
 
@@ -79,10 +100,12 @@ class BuildingPlan : JavaPlugin(), Listener {
     }
 
     override fun onDisable() {
+        apiRef = null
         planManager.stopSettlementTask()
         for (player in server.onlinePlayers) {
             planManager.onPlayerQuit(player.uniqueId)
         }
+        databaseManager.clearLocks()
         databaseManager.close()
         logger.info("${pluginMeta.name} disabled")
     }
@@ -95,6 +118,7 @@ class BuildingPlan : JavaPlugin(), Listener {
     @EventHandler
     fun onPlayerQuit(event: PlayerQuitEvent) {
         planManager.onPlayerQuit(event.player.uniqueId)
+        ShopGui.clearTab(event.player.uniqueId)
     }
 
     fun runTask(runnable: Runnable) {

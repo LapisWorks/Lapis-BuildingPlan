@@ -90,6 +90,8 @@ material-groups:
       - SUSPICIOUS_SAND
       - SUSPICIOUS_GRAVEL
       # ---- 碎石/圆石（大量填充用） ----
+      # 注：COBBLED_DEEPSLATE 归散装建材（2 点/组），请勿在 stone 组重复登记，
+      #     否则 findMaterialGroup 只会命中先出现的那一组，造成定价错乱。
       - COBBLESTONE
       - MOSSY_COBBLESTONE
       - COBBLED_DEEPSLATE
@@ -115,7 +117,6 @@ material-groups:
       - CHISELED_STONE_BRICKS
       # ---- 深板岩 ----
       - DEEPSLATE
-      - COBBLED_DEEPSLATE
       - POLISHED_DEEPSLATE
       - DEEPSLATE_BRICKS
       - DEEPSLATE_TILES

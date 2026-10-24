@@ -30,11 +30,16 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
                 }
                 // 检查是否有有效套餐
                 val playerData = plugin.planManager.getPlayerData(sender.uniqueId)
-                if (playerData == null || playerData.tier == "NONE") {
+                if (playerData == null) {
+                    plugin.langManager.msg(sender, "data-loading")
+                    return true
+                }
+                if (playerData.tier == "NONE") {
                     plugin.langManager.msg(sender, "no-subscription")
                     return true
                 }
-                if (System.currentTimeMillis() / 1000 >= playerData.expireTime) {
+                plugin.planManager.checkExpiration(playerData)
+                if (playerData.tier == "NONE") {
                     plugin.langManager.msg(sender, "subscription-expired")
                     return true
                 }
@@ -87,7 +92,11 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
 
     private fun handlePlan(player: Player) {
         val data = plugin.planManager.getPlayerData(player.uniqueId)
-        if (data == null || data.tier == "NONE") {
+        if (data == null) {
+            plugin.langManager.msg(player, "data-loading")
+            return
+        }
+        if (data.tier == "NONE") {
             plugin.langManager.msg(player, "no-subscription")
             return
         }
@@ -116,7 +125,7 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
             ))
             // 如果有 bonusPoints 才显示
             if (data.bonusPoints > 0) {
-                player.sendMessage("§8[§a+§8] §7补偿额度: §e${data.bonusPoints}")
+                plugin.langManager.msg(player, "bonus-info", mapOf("points" to data.bonusPoints.toString()))
             }
         }
     }
@@ -181,7 +190,7 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
                     plugin.langManager.msg(sender, "admin-extend-success",
                         mapOf("player" to targetName, "days" to days.toString(), "expire" to expireStr))
                 } else {
-                    sender.sendMessage("§c无法延长该玩家的套餐（可能无有效套餐）。")
+                    plugin.langManager.msg(sender, "admin-extend-failed")
                 }
             }
             "reset" -> {
@@ -199,7 +208,7 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
                 if (success) {
                     plugin.langManager.msg(sender, "admin-reset-success", mapOf("player" to targetName))
                 } else {
-                    sender.sendMessage("§c无法重置该玩家的额度。")
+                    plugin.langManager.msg(sender, "admin-reset-failed")
                 }
             }
             "resetall" -> {
@@ -224,7 +233,11 @@ class BpCommand(private val plugin: BuildingPlan) : CommandExecutor, TabComplete
 
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         return when {
-            args.size == 1 -> listOf("shop", "subscribe", "plan", "upgrade", "admin").filter { it.startsWith(args[0].lowercase()) }
+            args.size == 1 -> {
+                val base = mutableListOf("shop", "subscribe", "plan", "upgrade")
+                if (sender.hasPermission("buildingplan.admin")) base.add("admin")
+                base.filter { it.startsWith(args[0].lowercase()) }
+            }
             args.size == 2 && args[0].lowercase() == "admin" -> listOf("give", "reload", "extend", "reset", "resetall").filter { it.startsWith(args[1].lowercase()) }
             args.size == 3 && args[0].lowercase() == "admin" && (args[1].lowercase() in listOf("give", "extend", "reset")) ->
                 Bukkit.getOnlinePlayers().map { it.name }.filter { it.startsWith(args[2]) }

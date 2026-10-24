@@ -30,10 +30,6 @@ class ShopGui(plugin: BuildingPlan) : BpGui(plugin, rows = 6, titleKey = "gui.sh
         selectedTab = tabByPlayer[player.uniqueId]?.takeIf { it in groups.indices } ?: 0
     }
 
-    override fun onClosed(player: Player) {
-        tabByPlayer.remove(player.uniqueId)
-    }
-
     override fun render(player: Player) {
         val isEn = plugin.langManager.getLocale(player) == "en_us"
         val bg = GuiUtils.background()
@@ -92,26 +88,35 @@ class ShopGui(plugin: BuildingPlan) : BpGui(plugin, rows = 6, titleKey = "gui.sh
             val available = d?.let { plugin.planManager.getAvailableBalance(it) } ?: 0
             val canBuy1 = available >= cost
             val canBuy8 = available >= cost * 8
-            val canBuy64 = available >= cost * 64
+            val maxStacks = d?.let { plugin.planManager.maxStacksFor(player, material, cost) } ?: 0
+            val gatedBy5h = d != null && d.balance5h <= 0 && d.balanceDaily > 0
 
             if (isEn) {
-                listOf(
-                    "<#8D99AE>Cost per stack: <#FFD166>$cost pts",
-                    "<#8D99AE>Your available: <#FFD166>$available pts",
-                    "",
-                    if (canBuy1) "<#06D6A0>Left click: Buy 1 stack" else "<#EF476F>Left click: Buy 1 stack (insufficient)",
-                    if (canBuy8) "<#06D6A0>Right click: Buy 8 stacks" else "<#EF476F>Right click: Buy 8 stacks (insufficient)",
-                    if (canBuy64) "<#06D6A0>Shift+Left: Buy 64 stacks" else "<#EF476F>Shift+Left: Buy 64 stacks (insufficient)"
-                )
+                buildList {
+                    add("<#8D99AE>Cost per stack: <#FFD166>$cost pts")
+                    add("<#8D99AE>Your available: <#FFD166>$available pts")
+                    if (gatedBy5h) add("<#8D99AE>(5h quota exhausted; daily quota is gated by it)")
+                    add("")
+                    add(if (canBuy1) "<#06D6A0>Left click: Buy 1 stack" else "<#EF476F>Left click: Buy 1 stack (insufficient)")
+                    add(if (canBuy8) "<#06D6A0>Right click: Buy 8 stacks" else "<#EF476F>Right click: Buy 8 stacks (insufficient)")
+                    add(
+                        if (maxStacks > 0) "<#06D6A0>Shift+Left: Buy max ($maxStacks stacks)"
+                        else "<#EF476F>Shift+Left: Buy max (no room or insufficient)"
+                    )
+                }
             } else {
-                listOf(
-                    "<#8D99AE>每组消耗：<#FFD166>$cost 点",
-                    "<#8D99AE>当前可用：<#FFD166>$available 点",
-                    "",
-                    if (canBuy1) "<#06D6A0>左键购买1组" else "<#EF476F>左键购买1组 (额度不足)",
-                    if (canBuy8) "<#06D6A0>右键购买8组" else "<#EF476F>右键购买8组 (额度不足)",
-                    if (canBuy64) "<#06D6A0>Shift+左键购买64组" else "<#EF476F>Shift+左键购买64组 (额度不足)"
-                )
+                buildList {
+                    add("<#8D99AE>每组消耗：<#FFD166>$cost 点")
+                    add("<#8D99AE>当前可用：<#FFD166>$available 点")
+                    if (gatedBy5h) add("<#8D99AE>（5h 额度已用尽，日额度暂不可单独使用）")
+                    add("")
+                    add(if (canBuy1) "<#06D6A0>左键购买1组" else "<#EF476F>左键购买1组 (额度不足)")
+                    add(if (canBuy8) "<#06D6A0>右键购买8组" else "<#EF476F>右键购买8组 (额度不足)")
+                    add(
+                        if (maxStacks > 0) "<#06D6A0>Shift+左键买满（最多 $maxStacks 组）"
+                        else "<#EF476F>Shift+左键买满（背包空间不足或额度不足）"
+                    )
+                }
             }
         }
     )
@@ -151,12 +156,19 @@ class ShopGui(plugin: BuildingPlan) : BpGui(plugin, rows = 6, titleKey = "gui.sh
                 val materialIndex = page * 36 + (slot - 9)
                 if (materialIndex >= group.materials.size) return
 
+                val target = group.materials[materialIndex]
                 val stacks = when {
-                    event.isShiftClick && !event.isRightClick -> 64
+                    // Shift+左键 = 买满：受背包容量与额度共同限制，不再固定 64 组
+                    event.isShiftClick && !event.isRightClick ->
+                        plugin.planManager.maxStacksFor(player, target, group.pointsPerStack)
                     event.isRightClick -> 8
                     else -> 1
                 }
-                if (plugin.planManager.purchaseMaterial(player, group.materials[materialIndex], stacks)) {
+                if (stacks <= 0) {
+                    plugin.langManager.msg(player, "inventory-full")
+                    return
+                }
+                if (plugin.planManager.purchaseMaterial(player, target, stacks)) {
                     refresh()
                 }
             }
@@ -237,14 +249,20 @@ class ShopGui(plugin: BuildingPlan) : BpGui(plugin, rows = 6, titleKey = "gui.sh
         } else {
             "<#8D99AE>已用：<#FFD166>$used <#8D99AE>| 剩余：<#06D6A0>$remaining"
         }
-        return if (d != null && d.bonusPoints > 0) {
-            listOf(usage) + if (isEn) {
-                listOf("<#06D6A0>Bonus: +${d.bonusPoints}")
-            } else {
-                listOf("<#06D6A0>补偿额度：+${d.bonusPoints}")
+        return buildList {
+            add(usage)
+            if (d != null && d.bonusPoints > 0) {
+                add(if (isEn) "<#06D6A0>Bonus: +${d.bonusPoints}" else "<#06D6A0>补偿额度：+${d.bonusPoints}")
             }
-        } else {
-            listOf(usage)
+            // 5h 额度耗尽时说明还要等多久，避免玩家误以为订阅失效
+            if (type == DurabilityType.QUOTA_5H && d != null && d.balance5h <= 0) {
+                val now = System.currentTimeMillis() / 1000
+                val minutes = max(1, ceil((18000 - (now - d.last5hRefresh)) / 60.0).toInt())
+                add(
+                    if (isEn) "<#EF476F>5h quota exhausted, resets in ~$minutes min"
+                    else "<#EF476F>5h 额度已用尽，约 $minutes 分钟后重置"
+                )
+            }
         }
     }
 
@@ -253,5 +271,10 @@ class ShopGui(plugin: BuildingPlan) : BpGui(plugin, rows = 6, titleKey = "gui.sh
 
         /** 记住每个玩家上次选中的分类（跨多次打开） */
         private val tabByPlayer = ConcurrentHashMap<UUID, Int>()
+
+        /** 玩家退出时清理缓存，避免内存中残留离线玩家记录 */
+        fun clearTab(uuid: UUID) {
+            tabByPlayer.remove(uuid)
+        }
     }
 }

@@ -1,6 +1,10 @@
 package mc506lw.buildingPlan.manager
 
 import mc506lw.buildingPlan.BuildingPlan
+import mc506lw.buildingPlan.api.ConsumeResult
+import mc506lw.buildingPlan.api.QuotaSnapshot
+import mc506lw.buildingPlan.api.event.BalanceChangeEvent
+import mc506lw.buildingPlan.api.event.SubscriptionChangeEvent
 import mc506lw.buildingPlan.database.DatabaseManager
 import mc506lw.buildingPlan.gui.GuiUtils
 import kotlin.math.ceil
@@ -13,9 +17,12 @@ import org.bukkit.inventory.ItemStack
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.Lock
 
 class PlanManager(private val plugin: BuildingPlan) {
 
@@ -25,7 +32,8 @@ class PlanManager(private val plugin: BuildingPlan) {
 
     fun loadPlayerData(uuid: UUID): CompletableFuture<PlayerData> {
         return db.loadPlayerData(uuid.toString()).thenApply { data ->
-            checkExpiration(data)
+            // 加载阶段不派发事件：此时玩家还没真正上线，且可能不在主线程
+            checkExpiration(data, fireEvent = false)
             dataCache[uuid] = data
             data
         }
@@ -88,6 +96,7 @@ class PlanManager(private val plugin: BuildingPlan) {
                 data.pool -= poolDeduction
             }
             data.balanceWeekly -= remaining
+            data.weeklyUsed += remaining
         }
     }
 
@@ -121,11 +130,25 @@ class PlanManager(private val plugin: BuildingPlan) {
 
     fun performWeeklyReset(data: PlayerData, tier: PlanTier): PlayerData {
         val today = LocalDate.now()
-        if (today.dayOfWeek != DayOfWeek.MONDAY) return data
         val todayStr = today.format(dateFormatter)
-        if (data.lastWeeklyReset == todayStr) return data
+
+        val lastResetDate = if (data.lastWeeklyReset.isBlank()) {
+            null
+        } else {
+            try {
+                LocalDate.parse(data.lastWeeklyReset, dateFormatter)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        if (lastResetDate != null) {
+            val thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            if (!lastResetDate.isBefore(thisMonday)) return data
+        }
 
         data.balanceWeekly = tier.quotaWeekly
+        data.weeklyUsed = 0
         data.lastWeeklyReset = todayStr
         if (plugin.configManager.debug) {
             plugin.logger.info("[DEBUG] Weekly reset for ${data.uuid}: balanceWeekly=${data.balanceWeekly}")
@@ -133,10 +156,11 @@ class PlanManager(private val plugin: BuildingPlan) {
         return data
     }
 
-    fun checkExpiration(data: PlayerData): PlayerData {
+    fun checkExpiration(data: PlayerData, fireEvent: Boolean = true): PlayerData {
         if (data.tier == "NONE") return data
         val now = System.currentTimeMillis() / 1000
         if (now >= data.expireTime) {
+            val expiredTier = data.tier
             data.tier = "NONE"
             data.balance5h = 0
             data.balanceDaily = 0
@@ -148,6 +172,12 @@ class PlanManager(private val plugin: BuildingPlan) {
                 plugin.logger.info("[DEBUG] Subscription expired for ${data.uuid}")
             }
             savePlayerData(data)
+            if (fireEvent) {
+                fireSubscriptionChange(
+                    UUID.fromString(data.uuid), expiredTier, null,
+                    SubscriptionChangeEvent.Reason.EXPIRE, 0
+                )
+            }
         }
         return data
     }
@@ -168,11 +198,136 @@ class PlanManager(private val plugin: BuildingPlan) {
         return data
     }
 
+    // ---- 对外 API 支撑（供 BuildingPlanAPI 调用） ----
+
+    private fun fireBalanceChange(uuid: UUID, delta: Int, before: Int, after: Int, reason: String) {
+        try {
+            plugin.server.pluginManager.callEvent(BalanceChangeEvent(uuid, delta, before, after, reason))
+        } catch (e: Exception) {
+            // 监听方抛异常不能影响扣减主流程
+            plugin.logger.warning("BalanceChangeEvent listener threw: ${e.message}")
+        }
+    }
+
+    private fun fireSubscriptionChange(
+        uuid: UUID,
+        oldTier: String?,
+        newTier: String?,
+        reason: SubscriptionChangeEvent.Reason,
+        expireTime: Long
+    ) {
+        try {
+            plugin.server.pluginManager.callEvent(
+                SubscriptionChangeEvent(uuid, oldTier, newTier, reason, expireTime)
+            )
+        } catch (e: Exception) {
+            plugin.logger.warning("SubscriptionChangeEvent listener threw: ${e.message}")
+        }
+    }
+
+    /**
+     * 额度快照。只读：不会触发过期清理，也不会写库。
+     * 未订阅或已过期返回 null。
+     */
+    fun snapshot(uuid: UUID): QuotaSnapshot? {
+        val data = getPlayerData(uuid) ?: return null
+        if (data.tier == "NONE") return null
+        val tier = plugin.configManager.getPlanForTier(data.tier) ?: return null
+        val now = System.currentTimeMillis() / 1000
+        if (now >= data.expireTime) return null
+        return QuotaSnapshot(
+            playerId = uuid,
+            tier = data.tier.lowercase(),
+            balance5h = data.balance5h,
+            quota5h = tier.quota5h,
+            balanceDaily = data.balanceDaily,
+            quotaDaily = tier.quotaDaily,
+            balanceWeekly = data.balanceWeekly,
+            quotaWeekly = tier.quotaWeekly,
+            pool = data.pool,
+            poolCap = tier.poolCap,
+            bonusPoints = data.bonusPoints,
+            available = getAvailableBalance(data),
+            expireTime = data.expireTime,
+            remainingDays = getRemainingDays(data)
+        )
+    }
+
+    /**
+     * 原子扣减：要么扣掉全部 [points]，要么一点不扣。
+     * 扣减顺序与商店一致：先扣补偿额度，再扣 5h/日/池/周。
+     */
+    fun tryConsume(uuid: UUID, points: Int, reason: String): ConsumeResult {
+        if (points <= 0) {
+            return ConsumeResult.fail(ConsumeResult.FailReason.INVALID_AMOUNT, 0)
+        }
+        val data = getPlayerData(uuid) ?: return ConsumeResult.fail(ConsumeResult.FailReason.NOT_LOADED, 0)
+        if (data.tier == "NONE") return ConsumeResult.fail(ConsumeResult.FailReason.NO_SUBSCRIPTION, 0)
+
+        val lock = db.getLock(uuid.toString())
+        if (!tryLockWithWait(lock)) {
+            return ConsumeResult.fail(ConsumeResult.FailReason.LOCKED, getAvailableBalance(data))
+        }
+        try {
+            checkExpiration(data)
+            if (data.tier == "NONE") {
+                return ConsumeResult.fail(ConsumeResult.FailReason.EXPIRED, 0)
+            }
+            val tier = plugin.configManager.getPlanForTier(data.tier)
+                ?: return ConsumeResult.fail(ConsumeResult.FailReason.NO_SUBSCRIPTION, 0)
+            // 先补上跨天/跨周的结算，避免用旧余额判断（定时任务最多有 60 秒延迟）
+            performWeeklyReset(data, tier)
+            performDailySettlement(data, tier)
+            // 跨过 5h 窗口时先刷新
+            checkAndRefresh5h(data, tier)
+
+            val before = getAvailableBalance(data)
+            if (before < points) {
+                return ConsumeResult.fail(ConsumeResult.FailReason.INSUFFICIENT, before)
+            }
+            deductBalance(data, points)
+            savePlayerData(data)
+            val after = getAvailableBalance(data)
+            fireBalanceChange(uuid, -points, before, after, reason)
+            return ConsumeResult.ok(points, before, after)
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
+     * 退回额度到补偿额度（bonusPoints），不占三档配额，因此不会突破上限。
+     */
+    fun refund(uuid: UUID, points: Int, reason: String): Boolean {
+        if (points <= 0) return false
+        val data = getPlayerData(uuid) ?: return false
+        val lock = db.getLock(uuid.toString())
+        if (!tryLockWithWait(lock)) return false
+        try {
+            val before = getAvailableBalance(data)
+            data.bonusPoints += points
+            savePlayerData(data)
+            fireBalanceChange(uuid, points, before, getAvailableBalance(data), reason)
+            return true
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun tryLockWithWait(lock: Lock): Boolean {
+        return try {
+            lock.tryLock(2, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
     fun purchaseSubscription(player: Player, tierName: String): Boolean {
         val uuid = player.uniqueId
         val tier = plugin.configManager.getPlan(tierName) ?: return false
         val lock = db.getLock(uuid.toString())
-        if (!lock.tryLock()) return false
+        if (!tryLockWithWait(lock)) return false
         try {
             val data = getPlayerData(uuid) ?: return false
 
@@ -180,6 +335,7 @@ class PlanManager(private val plugin: BuildingPlan) {
                 return false
             }
 
+            val oldTier = data.tier.takeIf { it != "NONE" }
             val now = System.currentTimeMillis() / 1000
             data.originalPrice = serializePrice(tier.price)
             data.tier = tierName.uppercase()
@@ -189,12 +345,19 @@ class PlanManager(private val plugin: BuildingPlan) {
             data.balanceDaily = tier.quotaDaily
             data.balanceWeekly = tier.quotaWeekly
             data.pool = 0
+            data.weeklyUsed = 0
             data.last5hRefresh = now
             data.lastDailyReset = LocalDate.now().format(dateFormatter)
             data.lastWeeklyReset = LocalDate.now().format(dateFormatter)
             savePlayerData(data)
 
-            plugin.langManager.msg(player, "subscribe-success", mapOf("tier" to tierName))
+            fireSubscriptionChange(
+                uuid, oldTier, data.tier.lowercase(),
+                SubscriptionChangeEvent.Reason.SUBSCRIBE, data.expireTime
+            )
+
+            plugin.langManager.msg(player, "subscribe-success",
+                mapOf("tier" to tierName, "days" to plugin.configManager.subscriptionDays.toString()))
             return true
         } finally {
             lock.unlock()
@@ -230,6 +393,29 @@ class PlanManager(private val plugin: BuildingPlan) {
         return true
     }
 
+    fun capacityFor(player: Player, material: Material): Int {
+        var total = 0
+        for (item in player.inventory.storageContents) {
+            if (item == null || item.type.isAir) {
+                total += 64
+            } else if (item.type == material && item.amount < 64) {
+                total += 64 - item.amount
+            }
+        }
+        return total / 64
+    }
+
+    /**
+     * 单次最多能买多少组：受背包剩余容量、当前可用额度、单次上限 64 组三者共同限制。
+     * Shift+左键"买满"用它，避免 GUI 承诺一个玩家背包根本装不下的数量。
+     */
+    fun maxStacksFor(player: Player, material: Material, costPerStack: Int): Int {
+        if (costPerStack <= 0) return 0
+        val data = getPlayerData(player.uniqueId) ?: return 0
+        val byBalance = getAvailableBalance(data) / costPerStack
+        return minOf(byBalance, capacityFor(player, material), 64)
+    }
+
     fun purchaseMaterial(player: Player, material: Material, stacks: Int): Boolean {
         val uuid = player.uniqueId
         val group = plugin.configManager.findMaterialGroup(material) ?: return false
@@ -237,15 +423,14 @@ class PlanManager(private val plugin: BuildingPlan) {
         val totalCost = costPerStack * stacks
         val totalItems = stacks * 64
 
-        val neededSlots = stacks
-        val emptySlots = player.inventory.storageContents.count { it == null || it.type.isAir }
-        if (emptySlots < neededSlots) {
+        val capacity = capacityFor(player, material)
+        if (capacity < stacks) {
             plugin.langManager.msg(player, "inventory-full")
             return false
         }
 
         val lock = db.getLock(uuid.toString())
-        if (!lock.tryLock()) return false
+        if (!tryLockWithWait(lock)) return false
         try {
             val data = getPlayerData(uuid) ?: return false
             if (data.tier == "NONE") {
@@ -267,12 +452,23 @@ class PlanManager(private val plugin: BuildingPlan) {
                 return false
             }
 
+            val availableBefore = getAvailableBalance(data)
             deductBalance(data, totalCost)
             savePlayerData(data)
+            fireBalanceChange(
+                uuid, -totalCost, availableBefore, getAvailableBalance(data),
+                "shop:${material.name}"
+            )
 
             val itemStack = ItemStack.of(material, 64)
             for (i in 0 until stacks) {
-                player.inventory.addItem(itemStack.clone())
+                val leftover = player.inventory.addItem(itemStack.clone())
+                for ((_, left) in leftover) {
+                    player.world.dropItem(player.location, left)
+                }
+                if (leftover.isNotEmpty()) {
+                    plugin.logger.warning("Inventory overflow while delivering purchased ${material.name} to ${player.name}, dropped leftover on ground")
+                }
             }
 
             plugin.langManager.msg(player, "purchase-success",
@@ -290,14 +486,18 @@ class PlanManager(private val plugin: BuildingPlan) {
         }
     }
 
-    fun giveBonusPoints(player: Player, points: Int): Boolean {
-        val uuid = player.uniqueId
+    fun giveBonusPoints(player: Player, points: Int): Boolean = giveBonusPoints(player.uniqueId, points)
+
+    fun giveBonusPoints(uuid: UUID, points: Int): Boolean {
+        if (points <= 0) return false
         val lock = db.getLock(uuid.toString())
-        if (!lock.tryLock()) return false
+        if (!tryLockWithWait(lock)) return false
         try {
             val data = getPlayerData(uuid) ?: return false
+            val before = getAvailableBalance(data)
             data.bonusPoints += points
             savePlayerData(data)
+            fireBalanceChange(uuid, points, before, getAvailableBalance(data), "api:grant")
             return true
         } finally {
             lock.unlock()
@@ -319,6 +519,10 @@ class PlanManager(private val plugin: BuildingPlan) {
             if (data.tier == "NONE") return false
             data.expireTime += extraDays * 86400L
             savePlayerData(data)
+            fireSubscriptionChange(
+                uuid, data.tier.lowercase(), data.tier.lowercase(),
+                SubscriptionChangeEvent.Reason.ADMIN_EXTEND, data.expireTime
+            )
             return true
         } finally {
             lock.unlock()
@@ -336,10 +540,15 @@ class PlanManager(private val plugin: BuildingPlan) {
             data.balanceDaily = tier.quotaDaily
             data.balanceWeekly = tier.quotaWeekly
             data.pool = 0
+            data.weeklyUsed = 0
             data.last5hRefresh = now
             data.lastDailyReset = LocalDate.now().format(dateFormatter)
             data.lastWeeklyReset = LocalDate.now().format(dateFormatter)
             savePlayerData(data)
+            fireSubscriptionChange(
+                uuid, data.tier.lowercase(), data.tier.lowercase(),
+                SubscriptionChangeEvent.Reason.ADMIN_RESET, data.expireTime
+            )
             return true
         } finally {
             lock.unlock()
@@ -360,6 +569,7 @@ class PlanManager(private val plugin: BuildingPlan) {
                 data.balanceDaily = tier.quotaDaily
                 data.balanceWeekly = tier.quotaWeekly
                 data.pool = 0
+                data.weeklyUsed = 0
                 data.last5hRefresh = now
                 data.lastDailyReset = LocalDate.now().format(dateFormatter)
                 data.lastWeeklyReset = LocalDate.now().format(dateFormatter)
@@ -371,7 +581,8 @@ class PlanManager(private val plugin: BuildingPlan) {
         }
         // 再加载离线玩家处理
         try {
-            val offlinePlayers = db.loadAllPlayerData().get()
+            // 加超时，避免数据库异常时把主线程永久挂住
+            val offlinePlayers = db.loadAllPlayerData().get(10, TimeUnit.SECONDS)
             for (data in offlinePlayers) {
                 val uuid = UUID.fromString(data.uuid)
                 if (dataCache.containsKey(uuid)) continue // 已处理过
@@ -385,10 +596,12 @@ class PlanManager(private val plugin: BuildingPlan) {
                     data.balanceDaily = tier.quotaDaily
                     data.balanceWeekly = tier.quotaWeekly
                     data.pool = 0
+                    data.weeklyUsed = 0
                     data.last5hRefresh = now
                     data.lastDailyReset = LocalDate.now().format(dateFormatter)
                     data.lastWeeklyReset = LocalDate.now().format(dateFormatter)
-                    db.savePlayerDataSync(data)
+                    // 异步落盘，避免逐个 join 阻塞执行命令的线程
+                    db.savePlayerData(data)
                     count++
                 } finally {
                     lock.unlock()
@@ -414,8 +627,9 @@ class PlanManager(private val plugin: BuildingPlan) {
                 if (data.tier == "NONE") continue
 
                 var changed = false
-                if (today.dayOfWeek == DayOfWeek.MONDAY && data.lastWeeklyReset != todayStr) {
-                    performWeeklyReset(data, tier)
+                val beforeWeeklyReset = data.lastWeeklyReset
+                performWeeklyReset(data, tier)
+                if (data.lastWeeklyReset != beforeWeeklyReset) {
                     changed = true
                 }
                 if (data.lastDailyReset != todayStr) {
@@ -450,11 +664,13 @@ class PlanManager(private val plugin: BuildingPlan) {
     }
 
     fun onPlayerJoin(uuid: UUID) {
-        loadPlayerData(uuid).thenAccept { data ->
-            val tier = plugin.configManager.getPlanForTier(data.tier)
-            if (tier != null) {
+        try {
+            val data = loadPlayerData(uuid).join()
+            if (plugin.configManager.getPlanForTier(data.tier) != null) {
                 refreshPlayerState(data)
             }
+        } catch (e: Exception) {
+            plugin.logger.severe("Failed to load player data for $uuid: ${e.message}")
         }
     }
 
@@ -487,13 +703,12 @@ class PlanManager(private val plugin: BuildingPlan) {
     fun calculateUpgradeCost(data: PlayerData, currentTier: PlanTier, newTier: PlanTier): UpgradeCost? {
         // 总额度算法：28天 = 4周，每周有 weeklyQuota 额度。
         // 每过一周，当周的额度全部视为"已消耗"（哪怕没用完也已过期浪费）。
-        // 当前周的已用量 = weeklyQuota - balanceWeekly
+        // 当前周的已用量 = weeklyUsed（累计记录，周重置时归零，避免周一重置后退款被白嫖）
         // 总消耗 = 已过去周数 × weeklyQuota + 当前周已用量
         // 总容量 = (subscriptionDays / 7) × weeklyQuota
         val daysSinceSubscribe = (System.currentTimeMillis() / 1000 - data.subscribeTime) / 86400.0
         val completedWeeks = (daysSinceSubscribe / 7).toInt()
-        val currentWeekUsed = (currentTier.quotaWeekly - data.balanceWeekly).coerceAtLeast(0)
-        val totalConsumed = completedWeeks.toLong() * currentTier.quotaWeekly + currentWeekUsed
+        val totalConsumed = completedWeeks.toLong() * currentTier.quotaWeekly + data.weeklyUsed
         val totalWeeks = plugin.configManager.subscriptionDays / 7
         val totalCapacity = totalWeeks * currentTier.quotaWeekly.toLong()
         val usedRatio = if (totalCapacity <= 0) 0.0 else (totalConsumed.toDouble() / totalCapacity.toDouble()).coerceIn(0.0, 1.0)
@@ -526,7 +741,7 @@ class PlanManager(private val plugin: BuildingPlan) {
     fun upgradeSubscription(player: Player, newTierName: String): Boolean {
         val uuid = player.uniqueId
         val lock = db.getLock(uuid.toString())
-        if (!lock.tryLock()) return false
+        if (!tryLockWithWait(lock)) return false
         try {
             val data = getPlayerData(uuid) ?: return false
             if (data.tier == "NONE") return false
@@ -570,6 +785,7 @@ class PlanManager(private val plugin: BuildingPlan) {
                 }
             }
 
+            val oldTier = data.tier
             data.tier = newTierName.uppercase()
             data.subscribeTime = now
             data.expireTime = now + plugin.configManager.subscriptionDays * 86400L
@@ -577,12 +793,19 @@ class PlanManager(private val plugin: BuildingPlan) {
             data.balanceDaily = newTier.quotaDaily
             data.balanceWeekly = newTier.quotaWeekly
             data.pool = 0
+            data.weeklyUsed = 0
             data.last5hRefresh = now
             data.lastDailyReset = LocalDate.now().format(dateFormatter)
             data.lastWeeklyReset = LocalDate.now().format(dateFormatter)
             savePlayerData(data)
 
-            plugin.langManager.msg(player, "upgrade-success", mapOf("tier" to newTierName))
+            fireSubscriptionChange(
+                uuid, oldTier.lowercase(), data.tier.lowercase(),
+                SubscriptionChangeEvent.Reason.UPGRADE, data.expireTime
+            )
+
+            plugin.langManager.msg(player, "upgrade-success",
+                mapOf("tier" to newTierName, "days" to plugin.configManager.subscriptionDays.toString()))
 
             if (cost.refund.isNotEmpty()) {
                 val refundStr = cost.refund.entries.joinToString(", ") {
