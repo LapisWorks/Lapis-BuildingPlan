@@ -111,7 +111,7 @@ val api = Bukkit.getServicesManager().load(BuildingPlanAPI::class.java) ?: retur
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/BuildingPlan-1.5.jar"))
+    compileOnly(files("libs/Lapis-BuildingPlan-1.5.jar"))
 }
 ```
 

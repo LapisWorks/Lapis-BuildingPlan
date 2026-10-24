@@ -18,6 +18,7 @@ import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.plugin.ServicePriority
 import org.bukkit.plugin.java.JavaPlugin
+import java.io.File
 import java.util.function.Consumer
 
 class BuildingPlan : JavaPlugin(), Listener {
@@ -59,8 +60,31 @@ class BuildingPlan : JavaPlugin(), Listener {
     lateinit var guiManager: GuiManager
         private set
 
+    /**
+     * v1.5 起插件名由 BuildingPlan 改为 Lapis-BuildingPlan，数据目录随之从
+     * `plugins/BuildingPlan/` 变成 `plugins/Lapis-BuildingPlan/`。
+     *
+     * 这里做一次性迁移：仅当「新目录还没有数据库」且「旧目录有数据库」时才复制，
+     * 绝不覆盖已有数据；迁移失败只告警，不影响插件启动。
+     */
+    private fun migrateLegacyDataFolder() {
+        val legacy = File(dataFolder.parentFile, "BuildingPlan")
+        if (!legacy.isDirectory) return
+        if (File(dataFolder, "data.mv.db").exists()) return
+        if (!File(legacy, "data.mv.db").exists()) return
+        try {
+            legacy.copyRecursively(dataFolder, overwrite = false)
+            logger.info("已将旧数据目录 ${legacy.name} 迁移到 ${dataFolder.name}")
+        } catch (e: Exception) {
+            logger.warning("迁移旧数据目录失败，请手动把 ${legacy.path} 的内容复制到 ${dataFolder.path}: ${e.message}")
+        }
+    }
+
     override fun onEnable() {
         instance = this
+
+        // 必须在读取配置和打开数据库之前完成，否则新目录会是空的
+        migrateLegacyDataFolder()
 
         configManager = ConfigManager(this)
         configManager.load()
